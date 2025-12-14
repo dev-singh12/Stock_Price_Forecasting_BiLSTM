@@ -63,6 +63,7 @@ if st.button("Generate Forecast"):
         )
 
         features.dropna(inplace=True)
+        features.columns = features.columns.astype(str)
 
         scaler = MinMaxScaler()
         scaled_features = scaler.fit_transform(features)
