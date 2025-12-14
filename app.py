@@ -11,10 +11,10 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📈 Stock Price Forecasting using Bidirectional LSTM")
+st.title("📈 Stock Market Forecasting using Bidirectional LSTM")
 st.write(
     "Short-term stock price forecasting using a Bidirectional LSTM model "
-    "with TradingView-style technical indicators."
+    "with TradingView-style technical indicators and correlated stock analysis."
 )
 
 @st.cache_resource
@@ -23,11 +23,11 @@ def load_trained_model():
 
 model = load_trained_model()
 
-ticker = st.text_input("Stock Ticker Symbol", "AAPL")
+ticker = st.text_input("Primary Stock Ticker", "AAPL")
 forecast_days = st.slider("Forecast Horizon (Days)", 1, 14, 7)
 
 @st.cache_data
-def fetch_data(symbol):
+def fetch_stock(symbol):
     df = yf.download(symbol, start="2010-01-01", progress=False)
     df = df[['Close']]
     df.dropna(inplace=True)
@@ -36,7 +36,15 @@ def fetch_data(symbol):
 if st.button("Generate Forecast"):
 
     try:
-        data = fetch_data(ticker)
+        aapl = fetch_stock(ticker)
+        goog = fetch_stock("GOOG").rename(columns={"Close": "GOOG_Close"})
+
+        data = aapl.merge(
+            goog,
+            left_index=True,
+            right_index=True,
+            how="inner"
+        )
 
         if len(data) < 150:
             st.error("Not enough historical data to generate forecast.")
@@ -47,24 +55,28 @@ if st.button("Generate Forecast"):
 
         weights = np.arange(1, 21)
         data['WMA20'] = data['Close'].rolling(20).apply(
-            lambda x: np.dot(x, weights) / weights.sum(), raw=True
+            lambda x: np.dot(x, weights) / weights.sum(),
+            raw=True
         )
 
         data['STD20'] = data['Close'].rolling(20).std()
         data['Upper_Band'] = data['SMA20'] + 2 * data['STD20']
         data['Lower_Band'] = data['SMA20'] - 2 * data['STD20']
-        data.dropna(inplace=True)
 
-        returns = data[['Close']].pct_change()
-        returns.columns = ['Return']
+        data['AAPL_Return'] = data['Close'].pct_change()
+        data['GOOG_Return'] = data['GOOG_Close'].pct_change()
 
-        features = pd.concat(
+        features = data[
             [
-                returns,
-                data[['SMA20', 'EMA20', 'WMA20', 'Upper_Band', 'Lower_Band']]
-            ],
-            axis=1
-        )
+                'AAPL_Return',
+                'GOOG_Return',
+                'SMA20',
+                'EMA20',
+                'WMA20',
+                'Upper_Band',
+                'Lower_Band'
+            ]
+        ]
 
         features.dropna(inplace=True)
         features.columns = features.columns.astype(str)
@@ -104,25 +116,25 @@ if st.button("Generate Forecast"):
 
         fig, ax = plt.subplots(figsize=(12, 5))
 
-        recent_data = data.iloc[-150:]
+        recent = data.iloc[-150:]
 
-        ax.plot(recent_data.index, recent_data['Close'], label="Closing Price", linewidth=2)
-        ax.plot(recent_data.index, recent_data['SMA20'], label="SMA 20", linestyle="--")
-        ax.plot(recent_data.index, recent_data['EMA20'], label="EMA 20", linestyle="--")
-        ax.plot(recent_data.index, recent_data['WMA20'], label="WMA 20", linestyle="--")
+        ax.plot(recent.index, recent['Close'], label="Closing Price", linewidth=2)
+        ax.plot(recent.index, recent['SMA20'], label="SMA 20", linestyle="--")
+        ax.plot(recent.index, recent['EMA20'], label="EMA 20", linestyle="--")
+        ax.plot(recent.index, recent['WMA20'], label="WMA 20", linestyle="--")
 
         ax.fill_between(
-            recent_data.index,
-            recent_data['Upper_Band'],
-            recent_data['Lower_Band'],
+            recent.index,
+            recent['Upper_Band'],
+            recent['Lower_Band'],
             alpha=0.2,
             label="Bollinger Bands"
         )
 
         future_index = pd.date_range(
-            start=recent_data.index[-1],
+            start=recent.index[-1],
             periods=forecast_days + 1,
-            freq='B'
+            freq="B"
         )[1:]
 
         ax.plot(
@@ -134,9 +146,9 @@ if st.button("Generate Forecast"):
             label="Forecast"
         )
 
-        ax.axvline(recent_data.index[-1], linestyle=":", color="red")
+        ax.axvline(recent.index[-1], linestyle=":", color="red")
 
-        ax.set_title(f"{ticker} — Short-Term Price Forecast")
+        ax.set_title(f"{ticker} — Short-Term Forecast")
         ax.set_xlabel("Date")
         ax.set_ylabel("Price (USD)")
         ax.legend()
@@ -148,5 +160,7 @@ if st.button("Generate Forecast"):
     except Exception as e:
         st.error("An error occurred while generating the forecast.")
         st.exception(e)
+
+
 
 
