@@ -13,8 +13,8 @@ st.set_page_config(
 
 st.title("📈 Stock Price Forecasting using Bidirectional LSTM")
 st.write(
-    "This application provides short-term stock price forecasts using a "
-    "Bidirectional LSTM model combined with TradingView-style technical indicators."
+    "Short-term stock price forecasting using a Bidirectional LSTM model "
+    "with TradingView-style technical indicators."
 )
 
 @st.cache_resource
@@ -28,86 +28,113 @@ forecast_days = st.slider("Forecast Horizon (Days)", 1, 14, 7)
 
 @st.cache_data
 def fetch_data(symbol):
-    data = yf.download(symbol, start="2010-01-01")
-    data = data[['Close']]
-    data.dropna(inplace=True)
-    return data
+    df = yf.download(symbol, start="2010-01-01")
+    df = df[['Close']]
+    df.dropna(inplace=True)
+    return df
 
 if st.button("Generate Forecast"):
 
-    data = fetch_data(ticker)
+    try:
+        data = fetch_data(ticker)
 
-    data['SMA20'] = data['Close'].rolling(20).mean()
-    data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
+        data['SMA20'] = data['Close'].rolling(20).mean()
+        data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
 
-    weights = np.arange(1, 21)
-    data['WMA20'] = data['Close'].rolling(20).apply(
-        lambda x: np.dot(x, weights) / weights.sum(), raw=True
-    )
+        weights = np.arange(1, 21)
+        data['WMA20'] = data['Close'].rolling(20).apply(
+            lambda x: np.dot(x, weights) / weights.sum(), raw=True
+        )
 
-    data['STD20'] = data['Close'].rolling(20).std()
-    data['Upper_Band'] = data['SMA20'] + 2 * data['STD20']
-    data['Lower_Band'] = data['SMA20'] - 2 * data['STD20']
-    data.dropna(inplace=True)
+        data['STD20'] = data['Close'].rolling(20).std()
+        data['Upper_Band'] = data['SMA20'] + 2 * data['STD20']
+        data['Lower_Band'] = data['SMA20'] - 2 * data['STD20']
+        data.dropna(inplace=True)
 
-    returns = data[['Close']].pct_change().dropna()
-    scaler = MinMaxScaler()
-    scaled_returns = scaler.fit_transform(returns)
+        returns = data[['Close']].pct_change()
+        returns.columns = ['Return']
 
-    time_step = 100
-    window = scaled_returns[-time_step:].reshape(1, time_step, 1)
+        features = pd.concat(
+            [
+                returns,
+                data[['SMA20', 'EMA20', 'WMA20', 'Upper_Band', 'Lower_Band']]
+            ],
+            axis=1
+        )
 
-    future_scaled_returns = []
+        features.dropna(inplace=True)
 
-    for _ in range(forecast_days):
-        prediction = model.predict(window, verbose=0)[0][0]
-        future_scaled_returns.append(prediction)
-        window = np.append(window[:, 1:, :], [[[prediction]]], axis=1)
+        scaler = MinMaxScaler()
+        scaled_features = scaler.fit_transform(features)
 
-    dummy = np.zeros((len(future_scaled_returns), 1))
-    dummy[:, 0] = future_scaled_returns
-    predicted_returns = scaler.inverse_transform(dummy)[:, 0]
-    predicted_returns = np.clip(predicted_returns, -0.05, 0.05)
+        time_step = 100
+        window = scaled_features[-time_step:]
+        window = window.reshape(1, time_step, scaled_features.shape[1])
 
-    last_price = data['Close'].iloc[-1]
-    forecast_prices = []
+        future_scaled_returns = []
 
-    for r in predicted_returns:
-        last_price *= (1 + r)
-        forecast_prices.append(last_price)
+        for _ in range(forecast_days):
+            pred = model.predict(window, verbose=0)[0][0]
+            future_scaled_returns.append(pred)
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+            next_row = window[0, -1, :].copy()
+            next_row[0] = pred
+            window = np.append(
+                window[:, 1:, :],
+                [[next_row]],
+                axis=1
+            )
 
-    ax.plot(data['Close'].values[-150:], label="Closing Price", linewidth=2)
-    ax.plot(data['SMA20'].values[-150:], label="SMA 20", linestyle="--")
-    ax.plot(data['EMA20'].values[-150:], label="EMA 20", linestyle="--")
-    ax.plot(data['WMA20'].values[-150:], label="WMA 20", linestyle="--")
+        dummy = np.zeros((len(future_scaled_returns), scaled_features.shape[1]))
+        dummy[:, 0] = future_scaled_returns
+        predicted_returns = scaler.inverse_transform(dummy)[:, 0]
 
-    ax.fill_between(
-        range(len(data['Upper_Band'].values[-150:])),
-        data['Upper_Band'].values[-150:],
-        data['Lower_Band'].values[-150:],
-        alpha=0.2,
-        label="Bollinger Bands"
-    )
+        predicted_returns = np.clip(predicted_returns, -0.05, 0.05)
 
-    forecast_index = range(149, 149 + forecast_days + 1)
-    ax.plot(
-        forecast_index[1:],
-        forecast_prices,
-        marker="o",
-        color="red",
-        linewidth=2,
-        label="Forecast"
-    )
+        last_price = data['Close'].iloc[-1]
+        forecast_prices = []
 
-    ax.axvline(149, linestyle=":", color="red")
+        for r in predicted_returns:
+            last_price *= (1 + r)
+            forecast_prices.append(last_price)
 
-    ax.set_title(f"{ticker} — Short-Term Price Forecast")
-    ax.set_xlabel("Trading Days")
-    ax.set_ylabel("Price (USD)")
-    ax.legend()
-    ax.grid(alpha=0.3)
+        fig, ax = plt.subplots(figsize=(12, 5))
 
-    st.pyplot(fig)
-    st.success("Forecast generated successfully.")
+        ax.plot(data['Close'].values[-150:], label="Closing Price", linewidth=2)
+        ax.plot(data['SMA20'].values[-150:], label="SMA 20", linestyle="--")
+        ax.plot(data['EMA20'].values[-150:], label="EMA 20", linestyle="--")
+        ax.plot(data['WMA20'].values[-150:], label="WMA 20", linestyle="--")
+
+        ax.fill_between(
+            range(len(data['Upper_Band'].values[-150:])),
+            data['Upper_Band'].values[-150:],
+            data['Lower_Band'].values[-150:],
+            alpha=0.2,
+            label="Bollinger Bands"
+        )
+
+        forecast_index = range(149, 149 + forecast_days + 1)
+        ax.plot(
+            forecast_index[1:],
+            forecast_prices,
+            marker="o",
+            color="red",
+            linewidth=2,
+            label="Forecast"
+        )
+
+        ax.axvline(149, linestyle=":", color="red")
+
+        ax.set_title(f"{ticker} — Short-Term Price Forecast")
+        ax.set_xlabel("Trading Days")
+        ax.set_ylabel("Price (USD)")
+        ax.legend()
+        ax.grid(alpha=0.3)
+
+        st.pyplot(fig)
+        st.success("Forecast generated successfully.")
+
+    except Exception as e:
+        st.error("An error occurred while generating the forecast.")
+        st.exception(e)
+
