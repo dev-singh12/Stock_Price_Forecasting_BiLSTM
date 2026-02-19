@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: stock-forecast-app
+    env: docker
+    plan: free
+    buildCommand: docker build -t app .
+    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: PORT
+        value: 8501
+      - key: PYTHON_VERSION
+        value: 3.10.0

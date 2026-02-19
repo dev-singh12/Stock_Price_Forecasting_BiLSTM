@@ -1,4 +1,23 @@
-.ipynb_checkpoints/
-__pycache__/
-.env
+# Virtual Environment
 venv/
+.env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# MacOS
+.DS_Store
+
+# Logs
+*.log
+
+# Docker
+.dockerignore
+
+# Optional: Large temporary files
+*.tmp
+
