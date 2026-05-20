@@ -1,65 +1,60 @@
 """
-BiLSTM model factory with optional Bahdanau attention.
-
-Builds a fresh model each call — does not load or modify any existing
-artifact, including the legacy bilstm_stock_model.keras.
+Factory for building the PyTorch BiLSTM model.
 """
-from tensorflow import keras
+import torch
+import torch.nn as nn
 from models.attention import BahdanauAttention
 
-
-def build_model(use_attention: bool, input_shape: tuple) -> keras.Model:
-    """
-    Build and return a compiled BiLSTM model.
-
-    Args:
-        use_attention: If True, inserts BahdanauAttention after the second BiLSTM.
-        input_shape:   Tuple (window_size, n_features), e.g. (100, 10).
-
-    Architecture with attention (use_attention=True):
-        Input(100, 10)
-        → Bidirectional(LSTM(64, return_sequences=True))   output: (batch, 100, 128)
-        → Bidirectional(LSTM(64, return_sequences=True))   output: (batch, 100, 128)
-        → BahdanauAttention(units=64)                      output: (batch, 128)
-        → Dense(1)                                         output: (batch, 1)
-
-    Architecture without attention (use_attention=False):
-        Input(100, 10)
-        → Bidirectional(LSTM(64, return_sequences=True))   output: (batch, 100, 128)
-        → Bidirectional(LSTM(64, return_sequences=False))  output: (batch, 128)
-        → Dense(1)                                         output: (batch, 1)
-
-    The model predicts the next-day LOG RETURN (not raw price).
-    Compilation: Adam(lr=1e-3), loss="mse", metrics=["mae"]
-
-    Returns:
-        keras.Model: Compiled model ready for training.
-    """
-    inputs = keras.Input(shape=input_shape)
-    x = keras.layers.Bidirectional(keras.layers.LSTM(64, return_sequences=True))(inputs)
-    
-    if use_attention:
-        x = keras.layers.Bidirectional(keras.layers.LSTM(64, return_sequences=True))(x)
-        x = BahdanauAttention(units=64)(x)
-    else:
-        x = keras.layers.Bidirectional(keras.layers.LSTM(64, return_sequences=False))(x)
+class BiLSTMForecaster(nn.Module):
+    def __init__(self, input_dim: int, use_attention: bool = True):
+        super().__init__()
+        self.use_attention = use_attention
         
-    outputs = keras.layers.Dense(1)(x)
-    
-    model = keras.Model(inputs=inputs, outputs=outputs)
-    
-    model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-        loss="mse",
-        metrics=["mae"]
-    )
-    
-    model.summary()
-    return model
+        self.lstm1 = nn.LSTM(
+            input_size=input_dim, 
+            hidden_size=64, 
+            batch_first=True, 
+            bidirectional=True
+        )
+        self.lstm2 = nn.LSTM(
+            input_size=128, 
+            hidden_size=64, 
+            batch_first=True, 
+            bidirectional=True
+        )
+        
+        if self.use_attention:
+            self.attention = BahdanauAttention(128)
+            self.fc = nn.Linear(128, 1)
+        else:
+            self.fc = nn.Linear(128, 1)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x shape: (batch_size, time_steps, input_dim)
+        """
+        out, _ = self.lstm1(x)
+        out, _ = self.lstm2(out)
+        
+        if self.use_attention:
+            out = self.attention(out)
+        else:
+            # Take the last time step
+            out = out[:, -1, :]
+            
+        return self.fc(out)
+
+def build_model(use_attention: bool = True, input_shape: tuple = (100, 10)) -> nn.Module:
+    """
+    Build and return the PyTorch model.
+    """
+    time_steps, input_dim = input_shape
+    return BiLSTMForecaster(input_dim=input_dim, use_attention=use_attention)
 
 if __name__ == "__main__":
-    m1 = build_model(use_attention=True, input_shape=(100, 10))
-    m2 = build_model(use_attention=False, input_shape=(100, 10))
-    print("Model with attention built successfully")
-    print("Model without attention built successfully")
+    m1 = build_model(use_attention=True)
+    m2 = build_model(use_attention=False)
+    dummy_input = torch.randn(4, 100, 10)
+    print("With attention output shape:", m1(dummy_input).shape)
+    print("Without attention output shape:", m2(dummy_input).shape)
+    print("Model builders OK")
