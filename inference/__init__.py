@@ -1,1 +1,1 @@
-"""Live inference and forecasting package."""
+"""Inference package."""
