@@ -1,75 +1,47 @@
 """
-Bahdanau-style additive attention layer for the BiLSTM stock forecasting model.
-
-This is a lightweight, stateless implementation. It learns which timesteps
-within the 100-day input window matter most for the next-day return prediction.
-
-Serializable via get_config() for .keras format compatibility.
+Bahdanau (Additive) Attention layer using PyTorch.
 """
-import tensorflow as tf
-from tensorflow import keras
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-
-class BahdanauAttention(keras.layers.Layer):
+class BahdanauAttention(nn.Module):
     """
-    Bahdanau additive attention.
-
-    Input:  (batch, timesteps, features) — output of BiLSTM with return_sequences=True
-    Output: (batch, features)            — weighted sum of hidden states
-
-    Computation:
-        score   = tanh(inputs @ W_h)              shape: (batch, timesteps, units)
-        alpha   = softmax(score @ v, axis=1)      shape: (batch, timesteps, 1)
-        context = sum(alpha * inputs, axis=1)     shape: (batch, features)
-
-    Trainable weights:
-        W_h: (features, units)
-        v:   (units, 1)
+    Computes a context vector as a weighted sum of the LSTM hidden states.
+    Uses additive attention:
+        score = v^T tanh(W h_t)
+        weights = softmax(score)
+        context = sum(weights * h_t)
     """
+    def __init__(self, units: int):
+        super().__init__()
+        self.W = nn.Linear(units, units)
+        self.V = nn.Linear(units, 1)
 
-    def __init__(self, units: int = 64, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.units = units
-
-    def build(self, input_shape: tuple) -> None:
-        features = input_shape[-1]
-        self.W_h = self.add_weight(
-            name="W_h",
-            shape=(features, self.units),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-        self.v = self.add_weight(
-            name="v",
-            shape=(self.units, 1),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-        super().build(input_shape)
-
-    def call(self, inputs: tf.Tensor) -> tf.Tensor:
-        # inputs shape: (batch, timesteps, features)
-        # inputs @ W_h -> (batch, timesteps, units)
-        score = tf.nn.tanh(tf.matmul(inputs, self.W_h))
-        # score @ v -> (batch, timesteps, 1)
-        alpha = tf.nn.softmax(tf.matmul(score, self.v), axis=1)
-        # alpha * inputs -> (batch, timesteps, features)
-        # sum over axis=1 -> (batch, features)
-        context = tf.reduce_sum(alpha * inputs, axis=1)
-        return context
-
-    def get_config(self) -> dict:
-        config = super().get_config()
-        config.update({"units": self.units})
-        return config
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x shape: (batch_size, time_steps, hidden_dim)
+        Returns:
+            context shape: (batch_size, hidden_dim)
+        """
+        # score shape: (batch_size, time_steps, 1)
+        score = self.V(torch.tanh(self.W(x)))
+        
+        # attention_weights shape: (batch_size, time_steps, 1)
+        attention_weights = F.softmax(score, dim=1)
+        
+        # context shape: (batch_size, time_steps, hidden_dim)
+        context = attention_weights * x
+        
+        # sum over time axis -> (batch_size, hidden_dim)
+        return torch.sum(context, dim=1)
 
 if __name__ == "__main__":
-    import numpy as np
-    layer = BahdanauAttention(units=64)
-    x = tf.random.normal((4, 100, 128))  # batch=4, 100 timesteps, 128 features
-    out = layer(x)
-    print("Input shape: ", x.shape)
-    print("Output shape:", out.shape)   # must be (4, 128)
-    assert out.shape == (4, 128), f"Shape mismatch: {out.shape}"
+    # Smoke test
+    layer = BahdanauAttention(128)
+    dummy_input = torch.randn(4, 100, 128)
+    out = layer(dummy_input)
+    print("Input shape: ", dummy_input.shape)
+    print("Output shape:", out.shape)
+    assert out.shape == (4, 128)
     print("BahdanauAttention smoke test PASSED")
