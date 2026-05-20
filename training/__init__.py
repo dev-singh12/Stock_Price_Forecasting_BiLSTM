@@ -1,1 +1,1 @@
-"""Model retraining pipeline package."""
+"""Training package."""
